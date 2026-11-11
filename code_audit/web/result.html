@@ -1,0 +1,60 @@
+<div class="metrics">
+  <div><strong>{{ result.summary.repositories }}</strong>仓库</div>
+  <div><strong>{{ result.summary.different }}</strong>版本差异</div>
+  <div><strong>{{ result.summary.modified }}</strong>存在本地更改</div>
+  <div><strong>{{ result.summary.unknown }}</strong>无法判断</div>
+</div>
+<div class="sources">
+{% for source in result.sources %}
+  <div><span class="eyebrow">{{ '左侧' if loop.first else '右侧' }}{% if source.host %} · {{ source.host.qualified_id.rsplit('/', 1)[0] }}{% endif %}</span><b>{{ source.host.id if source.host else 'GitHub' }}</b>
+    <span class="badge {{ 'ok' if source.complete else 'warn' }}">{{ '完整快照' if source.complete else '不完整快照' }}</span>
+    <p>{{ source.started_at|time }} → {{ source.finished_at|time }}</p><small>{{ source.label }}</small>
+    {% for path in source.code_paths if not path.complete %}<p class="warning">路径采集不完整：{{ path.path }}{% for error in path.errors %} · {{ error }}{% endfor %}</p>{% endfor %}
+  </div>
+{% endfor %}
+</div>
+{% for error in result.errors %}<p class="warning">{{ error }}</p>{% endfor %}
+<p class="hint">版本结论依据分支和完整提交 SHA。本地更改单独提示，未比较更改内容；结果仅代表各自采集时刻。</p>
+<div class="result-legend"><span class="legend-equal">版本一致</span><span class="legend-different">版本不同</span><span class="legend-missing">单侧缺失</span><span class="legend-unknown">无法判断</span></div>
+<div class="table-scroll"><table><thead><tr><th>名称</th><th>左侧<small>{{ result.sources[0].host.id if result.sources[0].host else 'GitHub' }}</small></th><th>右侧<small>{{ result.sources[1].host.id if result.sources[1].host else 'GitHub' }}</small></th></tr></thead>
+<tbody>
+{% for row in result.rows %}
+{% set tone = row.status %}
+<tr class="status-{{ tone }}" data-status="{{ tone }}" data-code-paths="{{ row.code_paths|tojson|forceescape }}">
+  <td><div class="repo-title"><b class="repo-name">{{ row.repository.split('/')[-1] }}</b><span class="status-label">{{ status_labels[tone] }}</span></div><small>{{ row.repository }}</small>
+    <details class="repo-toggle"><summary aria-controls="repo-detail-{{ loop.index }}">查看详情</summary></details>
+  </td>
+  {% for side in (row.left,row.right) %}<td>{% if side %}<div class="side-state">
+    <p><b>分支</b><span>{{ side.branch or ('游离 HEAD' if side.head else '未确定') }}</span></p>
+    <p><b>提交</b>{% if side.head %}<button type="button" class="sha" data-copy="{{ side.head }}" title="{{ side.head }}（点击复制）">{{ side.head[:10] }}</button>{% else %}<span>无有效提交</span>{% endif %}</p>
+    {% if side.commit %}<p><b>摘要</b><span>{{ side.commit.splitlines()[-1] }}</span></p>{% endif %}
+    <p><b>Git 状态</b><span class="{{ 'modified' if side.modification and side.modification.dirty else 'muted' }}">{% if side.modification and side.modification.dirty %}{% for group in side.modification|change_groups %}<span class="change-count">{{ group.label }} {{ group.files|length }}</span>{% endfor %}{% else %}{{ side.modification|modification }}{% endif %}</span></p>
+  </div>{% else %}<span class="muted">{{ '仓库不存在' if tone == 'missing' else '无法确定，请查看详情' }}</span>{% endif %}</td>{% endfor %}
+</tr>
+<tr id="repo-detail-{{ loop.index }}" class="repo-details status-{{ tone }}">
+  <td>
+    <p><b>版本结论：</b>{{ row.conclusion }}{% if row.branch_equal is none and row.left and row.right %}（分支比较不适用）{% endif %}</p>
+    {% if row.target %}<p>GitHub 比较目标：{{ row.target.repository or '未确定' }} · {{ row.target.branch or '未确定' }}</p>{% endif %}
+    {% for error in row.errors %}<p class="warning">{{ error }}</p>{% endfor %}
+  </td>
+  {% for side in (row.left,row.right) %}
+  <td>{% if side %}
+    <div class="detail-side">
+      <p><b>{{ '仓库路径' if side.modification is not none else 'GitHub 仓库' }}</b><span>{{ side.path }}</span></p>
+      {% if side.commit %}<p><b>提交时间</b><span>{{ side.commit.splitlines()[0]|time }}</span></p>{% endif %}
+      {% if side.head %}<p><b>完整 SHA</b><code>{{ side.head }}</code></p>{% endif %}
+      {% if side.modification %}
+        {% if side.modification.dirty %}
+          {% for group in side.modification|change_groups %}<section class="change-group">
+            <h4>{{ group.label }}（{{ group.files|length }} 个文件）</h4><ul>
+            {% for file in group.files %}<li><span class="file-status">{{ file.operation }}</span> {{ file.path }}{% if file.original_path %} ← {{ file.original_path }}{% endif %}</li>{% endfor %}</ul>
+          </section>{% endfor %}
+        {% else %}<p>无本地更改</p>{% endif %}
+      {% endif %}
+      {% for error in side.errors %}<p class="warning">{{ error }}</p>{% endfor %}
+    </div>
+  {% else %}<span class="muted">{{ '仓库不存在' if tone == 'missing' else '无法确定，请查看结论' }}</span>{% endif %}</td>
+  {% endfor %}
+</tr>
+{% else %}<tr><td colspan="3">快照中没有 Git 仓库，请核对代码路径。</td></tr>{% endfor %}
+</tbody></table></div>

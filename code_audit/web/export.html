@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Code Audit 比较结果</title>
+  <style>{% include 'style.css' %}</style>
+</head>
+<body>
+  <header>
+    <div>
+      <span class="eyebrow">CODE AUDIT · SNAPSHOT REPORT</span>
+      <h1>代码版本比较</h1>
+      <p>生成时间：{{ result.created_at|time }}</p>
+    </div>
+  </header>
+  <main class="app">
+    <section class="panel">
+      {% include 'result.html' %}
+    </section>
+  </main>
+</body>
+</html>

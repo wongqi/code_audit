@@ -1,0 +1,42 @@
+devices:
+  X30-1:
+    hosts:
+      X30-A:
+        ssh:
+          host: 192.0.2.20
+          port: 22
+          username: robot
+          password: {env: AUDIT_SSH_PASSWORD}
+          jump: FHZN-A
+        code_paths:
+          - /home/robot/projects/driver
+          - /home/robot/projects/controller
+      FHZN-A:
+        ssh:
+          host: 192.0.2.10
+          port: 2222
+          username: robot
+          password: {env: AUDIT_SSH_PASSWORD}
+        code_paths:
+          - /home/robot/projects/tasks
+  CYVET-1:
+    hosts:
+      CYVET-A:
+        ssh:
+          host: 192.0.2.30
+          username: robot
+          key_filename: ~/.ssh/id_ed25519
+          key_password: {env: AUDIT_SSH_KEY_PASSWORD}
+        code_paths:
+          - /home/robot/projects
+
+github:
+  organization: example-organization
+  token: {env: GITHUB_TOKEN}
+
+settings:
+  snapshots_dir: ../snapshots
+  concurrency: 3
+  connect_timeout: 10
+  host_timeout: 180
+  github_timeout: 20
