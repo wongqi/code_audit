@@ -1,115 +1,118 @@
 <!doctype html>
 <html lang="zh-CN">
+
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="audit-token" content="{{ token }}">
-  <link rel="stylesheet" href="/assets/style.css">
-  <script src="/assets/app.js" defer></script>
-  <title>Code Audit · 代码版本工作台</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="audit-token" content="{{ token }}">
+    <link rel="stylesheet" href="/assets/style.css">
+    <script src="/assets/app.js" defer></script>
+    <title>Code Audit · 代码版本工作台</title>
 </head>
+
 <body>
-  <header>
-    <div>
-      <span class="eyebrow">CODE AUDIT / LOCAL WORKSPACE</span>
-      <h1>代码版本工作台</h1>
-      <p>采集 Git 状态 · 用本地快照核对版本</p>
-    </div>
-    <span class="statusline">只读采集 · 离线比较</span>
-  </header>
-  <main class="app">
-    <div id="global-error" class="warning" role="alert" hidden></div>
-    <nav>
-      <button type="button" id="tab-compare" class="active">比较快照</button>
-      <button type="button" id="tab-collect">采集状态</button>
-    </nav>
+    <header>
+        <div>
+            <span class="eyebrow">CODE AUDIT / LOCAL WORKSPACE</span>
+            <h1>代码版本工作台</h1>
+            <p>采集 Git 状态 · 用本地快照核对版本</p>
+        </div>
+        <span class="statusline">只读采集 · 离线比较</span>
+    </header>
+    <main class="app">
+        <div id="global-error" class="warning" role="alert" hidden></div>
+        <nav>
+            <button type="button" id="tab-compare" class="active">比较快照</button>
+            <button type="button" id="tab-collect">采集状态</button>
+        </nav>
 
-    <section id="compare-view">
-      <div class="panel">
-        <h2>选择比较对象</h2>
-        <p class="hint">左右可任选主机或 GitHub，再选择快照；选择同一主机即可比较历史。仅比较本地快照。</p>
-        <div class="grid2">
-          {% for side in ('left', 'right') %}
-          <div class="selectors">
-            <span class="eyebrow">{{ '左侧' if side == 'left' else '右侧' }}</span>
-            <label class="field">
-              对象
-              <select id="{{ side }}-host" aria-label="{{ '左侧' if side == 'left' else '右侧' }}对象"></select>
-            </label>
-            <label class="field">
-              快照
-              <select id="{{ side }}-file" aria-label="{{ '左侧' if side == 'left' else '右侧' }}快照"></select>
-            </label>
-            <label class="field">
-              或手动载入 JSON 文件
-              <input id="{{ side }}-upload" type="file" accept=".json,application/json">
-            </label>
-            <small id="{{ side }}-upload-name">文件仅用于比较，不保存到服务器。</small>
-            <button type="button" id="{{ side }}-clear" hidden>清除载入文件</button>
-          </div>
-          {% endfor %}
-        </div>
-        <div class="row actions">
-          <button type="button" class="primary" id="compare-now">比较所选快照</button>
-          <span id="compare-status" class="statusline" role="status">请选择快照。</span>
-        </div>
-      </div>
+        <section id="compare-view">
+            <div class="panel">
+                <h2>选择比较对象</h2>
+                <p class="hint">左右可任选主机或 GitHub，再选择快照；选择同一主机即可比较历史。仅比较本地快照。</p>
+                <div class="grid2">
+                    {% for side in ('left', 'right') %}
+                    <div class="selectors">
+                        <span class="eyebrow">{{ '左侧' if side == 'left' else '右侧' }}</span>
+                        <label class="field">
+                            对象
+                            <select id="{{ side }}-host" aria-label="{{ '左侧' if side == 'left' else '右侧' }}对象"></select>
+                        </label>
+                        <label class="field">
+                            快照
+                            <select id="{{ side }}-file" aria-label="{{ '左侧' if side == 'left' else '右侧' }}快照"></select>
+                        </label>
+                        <label class="field">
+                            或手动载入 JSON 文件
+                            <input id="{{ side }}-upload" type="file" accept=".json,application/json">
+                        </label>
+                        <small id="{{ side }}-upload-name">文件仅用于比较，不保存到服务器。</small>
+                        <button type="button" id="{{ side }}-clear" hidden>清除载入文件</button>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="row actions">
+                    <button type="button" class="primary" id="compare-now">比较所选快照</button>
+                    <span id="compare-status" class="statusline" role="status">请选择快照。</span>
+                </div>
+            </div>
 
-      <div class="panel">
-        <div class="row between">
-          <h2>比较结果</h2>
-          <button type="button" id="export" disabled>导出 HTML + JSON</button>
-        </div>
-        <div class="row filters">
-          <input type="search" id="search" aria-label="搜索仓库" placeholder="搜索仓库、路径、分支">
-          <label>
-            代码路径
-            <select id="path-filter" aria-label="筛选代码路径">
-              <option value="all">全部路径</option>
-            </select>
-          </label>
-          <label>
-            比较结论
-            <select id="filter" aria-label="筛选比较结论">
-              <option value="all">全部结论</option>
-              <option value="equal">版本一致</option>
-              <option value="different">版本不同</option>
-              <option value="missing">单侧缺失</option>
-              <option value="unknown">无法判断</option>
-            </select>
-          </label>
-          <span id="visible-count" class="statusline"></span>
-        </div>
-        <div id="result">
-          <div class="empty">选择两份快照，查看分支、提交与 Git 状态。</div>
-        </div>
-      </div>
-    </section>
+            <div class="panel">
+                <div class="row between">
+                    <h2>比较结果</h2>
+                    <button type="button" id="export" disabled>导出 HTML + JSON</button>
+                </div>
+                <div class="row filters">
+                    <input type="search" id="search" aria-label="搜索仓库" placeholder="搜索仓库、路径、分支">
+                    <label>
+                        代码路径
+                        <select id="path-filter" aria-label="筛选代码路径">
+                            <option value="all">全部路径</option>
+                        </select>
+                    </label>
+                    <label>
+                        比较结论
+                        <select id="filter" aria-label="筛选比较结论">
+                            <option value="all">全部结论</option>
+                            <option value="equal">版本一致</option>
+                            <option value="different">版本不同</option>
+                            <option value="missing">单侧缺失</option>
+                            <option value="unknown">无法判断</option>
+                        </select>
+                    </label>
+                    <span id="visible-count" class="statusline"></span>
+                </div>
+                <div id="result">
+                    <div class="empty">选择两份快照，查看分支、提交与 Git 状态。</div>
+                </div>
+            </div>
+        </section>
 
-    <section id="collect-view" hidden>
-      <div class="panel">
-        <div class="row between">
-          <div>
-            <h2>选择采集对象</h2>
-            <p class="hint">勾选主机或 GitHub，可同时采集。设备仅作为名称分层。</p>
-          </div>
-          <label><input type="checkbox" id="all-hosts"> 全部配置主机</label>
-        </div>
-        <div id="object-list" class="device-grid"></div>
-        <button type="button" class="primary" id="collect-start">开始采集</button>
-      </div>
-      <div class="panel">
-        <div class="row between">
-          <h2>当前 / 最近一次任务</h2>
-          <button type="button" id="collect-stop" hidden>停止采集</button>
-        </div>
-        <p id="task-status" class="statusline">还没有网页采集任务。</p>
-        <div id="question"></div>
-        <pre id="task-log" class="log" hidden></pre>
-        <div id="task-results"></div>
-      </div>
-    </section>
-  </main>
-  <footer>快照列表自动更新。版本一致不代表本地更改内容相同；导出下载含 HTML 和 JSON 的 ZIP 文件。</footer>
+        <section id="collect-view" hidden>
+            <div class="panel">
+                <div class="row between">
+                    <div>
+                        <h2>选择采集对象</h2>
+                        <p class="hint">勾选主机或 GitHub，可同时采集。设备仅作为名称分层。</p>
+                    </div>
+                    <label><input type="checkbox" id="all-hosts"> 全部配置主机</label>
+                </div>
+                <div id="object-list" class="device-grid"></div>
+                <button type="button" class="primary" id="collect-start">开始采集</button>
+            </div>
+            <div class="panel">
+                <div class="row between">
+                    <h2>当前 / 最近一次任务</h2>
+                    <button type="button" id="collect-stop" hidden>停止采集</button>
+                </div>
+                <p id="task-status" class="statusline">还没有网页采集任务。</p>
+                <div id="question"></div>
+                <pre id="task-log" class="log" hidden></pre>
+                <div id="task-results"></div>
+            </div>
+        </section>
+    </main>
+    <footer>快照列表自动更新。版本一致不代表本地更改内容相同；导出下载含 HTML 和 JSON 的 ZIP 文件。</footer>
 </body>
+
 </html>
