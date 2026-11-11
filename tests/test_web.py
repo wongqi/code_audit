@@ -332,9 +332,9 @@ class WebTests(unittest.TestCase):
             )
             self.assertEqual(len(sections), 3)
             self.assertIn("暂存的更改（1 个文件）", sections[0])
-            self.assertIn(">新增</span> config/robot.yaml", sections[0])
+            self.assertRegex(sections[0], r">新增</span>\s+config/robot\.yaml")
             self.assertIn("未暂存的更改（1 个文件）", sections[1])
-            self.assertIn(">修改</span> config/robot.yaml", sections[1])
+            self.assertRegex(sections[1], r">修改</span>\s+config/robot\.yaml")
             self.assertIn("未跟踪的文件（1 个文件）", sections[2])
             self.assertIn("&lt;untracked&gt;.py", sections[2])
 
@@ -360,6 +360,13 @@ class WebTests(unittest.TestCase):
         a1, a2, _, _ = self.samples()
         data = {"inputs": [{"name": "A"}, {"name": "B"}]}
         before = set(self.root.rglob("*"))
+        stylesheet = (Path(__file__).parents[1] / "code_audit/web/style.css").read_text()
+
+        def assert_embedded_styles(html):
+            style = re.search(r"<style>(.*?)</style>", html, re.S)
+            self.assertIsNotNone(style)
+            self.assertEqual(style[1].strip(), stylesheet.strip())
+
         compared = self.post("/api/compare", data).json["result"]
         response = self.post("/api/export", data)
         self.assertEqual(response.status_code, 200, response.data[:100])
@@ -367,6 +374,7 @@ class WebTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
             self.assertEqual(sorted(archive.namelist()), ["result.html", "result.json"])
             self.assertIn("版本一致", archive.read("result.html").decode())
+            assert_embedded_styles(archive.read("result.html").decode())
             self.assertEqual(
                 json.loads(archive.read("result.json"))["rows"], compared["rows"]
             )
@@ -391,6 +399,7 @@ class WebTests(unittest.TestCase):
             )
         folders = list((self.root / "exports").iterdir())
         self.assertEqual(len(folders), 1)
+        assert_embedded_styles((folders[0] / "result.html").read_text())
         self.assertEqual(
             sorted(p.name for p in folders[0].iterdir()), ["result.html", "result.json"]
         )
