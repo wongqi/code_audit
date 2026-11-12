@@ -156,6 +156,34 @@ class WebTests(unittest.TestCase):
         self.assertEqual(invalid.status_code, 400)
         self.assertIn("重新采集", invalid.json["error"])
 
+    def test_unreadable_snapshots_expose_each_path_and_specific_reason(self):
+        self.app()
+        a, b, _, _ = self.samples()
+        directory = a.parent
+        empty = directory / "device_status.json"
+        empty.write_bytes(b"")
+        malformed = directory / "<broken>.json"
+        malformed.write_text('{\n"token": "private-text",\n')
+        invalid = directory / "invalid.json"
+        invalid.write_text("{}")
+        unreadable = directory / "encoding.json"
+        unreadable.write_bytes(b"\xff\xfe")
+        before = {p: p.read_bytes() for p in (empty, malformed, invalid, unreadable)}
+        state = self.client.get("/api/state").json
+        errors = {r["path"]: r["error"] for r in state["snapshots"] if r["error"]}
+        self.assertEqual(len(errors), 4)
+        self.assertIn("文件为空", errors[str(empty)])
+        self.assertIn("JSON 格式错误：第 3 行，第 1 列", errors[str(malformed)])
+        self.assertNotIn("private-text", json.dumps(errors))
+        self.assertIn("无效快照类型", errors[str(invalid)])
+        self.assertIn("UTF-8", errors[str(unreadable)])
+        with self.assertRaisesRegex(ValueError, "device_status.json.*文件为空"):
+            load_snapshot(empty)
+        result = self.post("/api/compare", {"inputs": [{"name": "A"}, {"name": "B"}]})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json["result"]["exit_code"], 0)
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
+
     def test_objects_expose_device_groups_for_host_labels(self):
         self.app()
         state = self.client.get("/api/state").json
@@ -360,7 +388,9 @@ class WebTests(unittest.TestCase):
         a1, a2, _, _ = self.samples()
         data = {"inputs": [{"name": "A"}, {"name": "B"}]}
         before = set(self.root.rglob("*"))
-        stylesheet = (Path(__file__).parents[1] / "code_audit/web/style.css").read_text()
+        stylesheet = (
+            Path(__file__).parents[1] / "code_audit/web/style.css"
+        ).read_text()
 
         def assert_embedded_styles(html):
             style = re.search(r"<style>(.*?)</style>", html, re.S)

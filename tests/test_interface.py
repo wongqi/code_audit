@@ -309,6 +309,115 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn("累计", stream.getvalue())
         self.assertNotIn("sensitive-token", stream.getvalue() + json.dumps(snapshot))
 
+    def test_openssh_host_key_alias_resolution_and_private_address_isolation(self):
+        import paramiko
+
+        from code_audit.collect import host_key_alias
+
+        entry = copy.deepcopy(self.config["_hosts"]["D/A"])
+        entry["config"]["ssh"] = {"host": "192.0.2.20", "jump": "B"}
+        settings = paramiko.SSHConfig.from_text("Host A\n  HostKeyAlias trusted-A\n")
+        self.assertEqual(host_key_alias("D/A", entry, settings), "trusted-A")
+        settings = paramiko.SSHConfig.from_text(
+            "Host D/A\n  HostKeyAlias qualified-A\nHost A\n  HostKeyAlias short-A\n"
+        )
+        self.assertEqual(host_key_alias("D/A", entry, settings), "qualified-A")
+        empty = paramiko.SSHConfig()
+        self.assertEqual(host_key_alias("D/A", entry, empty), "code-audit-D%2FA")
+        self.assertNotEqual(
+            host_key_alias("D/A", entry, empty), host_key_alias("Other/A", entry, empty)
+        )
+        entry["config"]["ssh"].pop("jump")
+        self.assertIsNone(host_key_alias("D/A", entry, empty))
+
+    def test_host_key_alias_reuses_openssh_record_and_rejects_changed_key(self):
+        import paramiko
+
+        # Exercise Paramiko's actual key lookup; only socket/transport/auth are mocked.
+        ssh_dir = self.root / "ssh"
+        ssh_dir.mkdir()
+        (ssh_dir / "config").write_text("Host A\n  HostKeyAlias trusted-A\n")
+        key = paramiko.RSAKey.generate(1024)
+        known = paramiko.HostKeys()
+        known.add("trusted-A", key.get_name(), key)
+        known.save(str(ssh_dir / "known_hosts"))
+        before = (ssh_dir / "known_hosts").read_bytes()
+        original_expanduser = Path.expanduser
+
+        def expanduser(path):
+            if str(path).startswith("~/.ssh/"):
+                return ssh_dir / path.name
+            return original_expanduser(path)
+
+        self.config["_hosts"]["D/A"]["config"]["ssh"]["port"] = 2222
+        transport = MagicMock()
+        transport.gss_kex_used = False
+        transport.get_remote_server_key.return_value = key
+        transport.get_security_options.return_value.key_types = [key.get_name()]
+        channel = transport.open_session.return_value
+        channel.recv_ready.side_effect = [True, False, False]
+        channel.recv.return_value = json.dumps(self.capture()).encode()
+        channel.recv_stderr_ready.return_value = False
+        channel.exit_status_ready.return_value = True
+        channel.recv_exit_status.return_value = 0
+        client = paramiko.SSHClient()
+        with (
+            patch.object(Path, "expanduser", expanduser),
+            patch.object(paramiko, "SSHClient", return_value=client),
+            patch("paramiko.client.Transport", return_value=transport),
+            patch.object(client, "_auth"),
+            patch("code_audit.collect.socket.create_connection") as connection,
+            patch("builtins.input", side_effect=AssertionError("already trusted")),
+        ):
+            result = collect_host(self.config, "A")
+            transport.get_remote_server_key.return_value = paramiko.RSAKey.generate(
+                1024
+            )
+            changed = collect_host(self.config, "A")
+        self.assertTrue(result["complete"], result["errors"])
+        self.assertFalse(changed["complete"])
+        self.assertIn("密钥记录名：trusted-A", changed["errors"][0])
+        self.assertIn("SSH 主机密钥不匹配", changed["errors"][0])
+        self.assertEqual(connection.call_args.args[0], ("localhost", 2222))
+        self.assertEqual(transport.start_client.call_count, 2)
+        self.assertEqual((ssh_dir / "known_hosts").read_bytes(), before)
+
+    def test_host_key_mismatch_reports_target_fingerprints_and_preserves_records(self):
+        import paramiko
+
+        from code_audit.collect import key_fingerprint
+
+        old_key, new_key = (
+            paramiko.RSAKey.generate(1024),
+            paramiko.RSAKey.generate(1024),
+        )
+        output = io.StringIO()
+        clients = [MagicMock(), MagicMock()]
+        clients[1].connect.side_effect = paramiko.BadHostKeyException(
+            "code-audit-D%2FA", new_key, old_key
+        )
+        self.config["_hosts"]["D/A"]["config"]["ssh"]["jump"] = "B"
+        with (
+            patch.object(paramiko, "SSHClient", side_effect=clients),
+            patch.object(paramiko, "SSHConfig", return_value=paramiko.SSHConfig()),
+            Progress(stream=output) as progress,
+            patch("builtins.input", side_effect=AssertionError("must not overwrite")),
+        ):
+            result = collect_host(self.config, "A", progress)
+        self.assertFalse(result["complete"])
+        error = result["errors"][0]
+        self.assertIn("SSH 主机密钥不匹配：D/A", error)
+        self.assertIn("localhost:22", error)
+        self.assertIn("本次指纹：" + key_fingerprint(new_key), error)
+        self.assertIn("已保存指纹：" + key_fingerprint(old_key), error)
+        self.assertIn("ssh-keygen -f ", error)
+        self.assertIn("-R code-audit-D%2FA", error)
+        self.assertIn("HostKeyAlias", error)
+        self.assertNotIn(new_key.get_base64(), error)
+        self.assertIn("SSH 主机密钥不匹配", output.getvalue())
+        clients[1].save_host_keys.assert_not_called()
+        clients[1].get_transport.return_value.open_session.assert_not_called()
+
     def test_remote_progress_stderr_is_separate_from_snapshot_stdout(self):
         import paramiko
 

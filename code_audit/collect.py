@@ -7,6 +7,7 @@ import json
 import queue
 import select
 import shlex
+import socket
 import sys
 import threading
 import time
@@ -21,6 +22,28 @@ from .storage import new_snapshot, normalize_repo, now, redact
 
 HOST_LOCK = threading.Lock()
 PROMPT_CONTEXT = threading.local()
+
+
+def key_fingerprint(key):
+    if key is None:
+        return "未记录"
+    digest = (
+        base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
+    )
+    return key.get_name() + " SHA256:" + digest
+
+
+def host_key_alias(identifier, entry, ssh_config):
+    """Use OpenSSH aliases when set; isolate private addresses behind jump hosts."""
+    for name in dict.fromkeys(
+        (identifier, entry["host_id"], entry["config"]["ssh"]["host"])
+    ):
+        alias = ssh_config.lookup(name).get("hostkeyalias")
+        if alias:
+            return alias
+    if entry["config"]["ssh"].get("jump"):
+        return "code-audit-" + quote(identifier, safe="")
+    return None
 
 
 class HostKeyPrompts:
@@ -147,6 +170,10 @@ def collect_host(config, host_id, progress=None):
         return value
 
     class ConfirmPolicy(paramiko.MissingHostKeyPolicy):
+        def __init__(self, identifier, endpoint):
+            self.identifier = identifier
+            self.endpoint = endpoint
+
         def missing_host_key(self, client, hostname, key):
             nonlocal local_waited
             with HOST_LOCK:
@@ -155,33 +182,34 @@ def collect_host(config, host_id, progress=None):
                 existing = client.get_host_keys().lookup(hostname)
                 if existing:
                     if existing.get(key.get_name()) != key:
-                        raise paramiko.SSHException(
-                            "主机密钥与已保存记录不一致：" + hostname
+                        raise paramiko.BadHostKeyException(
+                            hostname, key, existing.get(key.get_name())
                         )
                     return
-                fingerprint = (
-                    base64.b64encode(hashlib.sha256(key.asbytes()).digest())
-                    .decode()
-                    .rstrip("=")
+                description = (
+                    self.identifier
+                    + "（"
+                    + self.endpoint
+                    + "；密钥记录名 "
+                    + hostname
+                    + "）"
                 )
                 if not sys.stdin.isatty() and not (
                     progress is not None and hasattr(progress, "prompt")
                 ):
                     raise paramiko.SSHException(
                         "未知主机密钥："
-                        + hostname
-                        + " SHA256:"
-                        + fingerprint
+                        + description
+                        + "；"
+                        + key_fingerprint(key)
                         + "；请先交互连接或配置 known_hosts"
                     )
                 message = (
                     "接受主机 "
-                    + hostname
+                    + description
                     + " "
-                    + key.get_name()
-                    + " SHA256:"
-                    + fingerprint
-                    + "？请输入 yes/no 并按回车（等待输入期间暂停进度与采集计时）： "
+                    + key_fingerprint(key)
+                    + "？请输入 yes/no 并按回车： "
                 )
                 if prompts:
                     answer = prompts.ask(message)
@@ -210,6 +238,9 @@ def collect_host(config, host_id, progress=None):
         entry = config["_hosts"][identifier]
         host = entry["config"]
         ssh = host["ssh"]
+        port = int(ssh.get("port", 22))
+        endpoint = ssh["host"] + ":" + str(port)
+        alias = host_key_alias(identifier, entry, ssh_config)
         emit(
             "正在连接 "
             + identifier
@@ -220,6 +251,8 @@ def collect_host(config, host_id, progress=None):
             + ")……"
         )
         sock = None
+        if alias:
+            emit(identifier + " 使用主机密钥别名：" + alias)
         if ssh.get("jump"):
             jump_id = resolve_host(config, ssh["jump"], entry["device_id"])
             emit("通过跳板 " + jump_id + " 连接……")
@@ -236,7 +269,7 @@ def collect_host(config, host_id, progress=None):
         client.load_system_host_keys()
         if known_hosts.exists():
             client.load_host_keys(str(known_hosts))
-        client.set_missing_host_key_policy(ConfirmPolicy())
+        client.set_missing_host_key_policy(ConfirmPolicy(identifier, endpoint))
         key = ssh.get("key_filename")
         if key:
             key_path = Path(key).expanduser()
@@ -244,23 +277,64 @@ def collect_host(config, host_id, progress=None):
                 key_path if key_path.is_absolute() else Path(config["_root"]) / key_path
             )
         timeout = min(settings["connect_timeout"], remaining())
-        client.connect(
-            hostname=ssh["host"],
-            port=int(ssh.get("port", 22)),
-            username=ssh.get("username"),
-            password=secret(ssh.get("password")),
-            key_filename=key,
-            passphrase=secret(ssh.get("key_password")),
-            sock=sock,
-            timeout=timeout,
-            auth_timeout=timeout,
-            banner_timeout=timeout,
-            allow_agent=ssh.get("allow_agent", True),
-            look_for_keys=ssh.get("look_for_keys", True),
-        )
+        if alias and sock is None:
+            sock = socket.create_connection((ssh["host"], port), timeout=timeout)
+            callbacks.append(cancellation.watch(sock.close))
+        try:
+            # The socket has the real destination. Paramiko uses hostname/port for
+            # host-key lookup; OpenSSH HostKeyAlias is stored without a port suffix.
+            client.connect(
+                hostname=alias or ssh["host"],
+                port=22 if alias else port,
+                username=ssh.get("username"),
+                password=secret(ssh.get("password")),
+                key_filename=key,
+                passphrase=secret(ssh.get("key_password")),
+                sock=sock,
+                timeout=timeout,
+                auth_timeout=timeout,
+                banner_timeout=timeout,
+                allow_agent=ssh.get("allow_agent", True),
+                look_for_keys=ssh.get("look_for_keys", True),
+            )
+        except paramiko.BadHostKeyException as exc:
+            remove_command = (
+                "ssh-keygen -f "
+                + shlex.quote(str(known_hosts))
+                + " -R "
+                + shlex.quote(exc.hostname)
+            )
+            raise RuntimeError(
+                "SSH 主机密钥不匹配："
+                + identifier
+                + "（"
+                + endpoint
+                + "）；"
+                + "密钥记录名："
+                + exc.hostname
+                + "；"
+                + "本次指纹："
+                + key_fingerprint(exc.key)
+                + "；"
+                + "已保存指纹："
+                + key_fingerprint(exc.expected_key)
+                + "；"
+                + "记录文件："
+                + str(known_hosts)
+                + "；"
+                + "已拒绝连接。请先核对目标主机与指纹；若为不同跳板后的相同内网地址，请配置不同 HostKeyAlias；"
+                + "仅在确认旧记录失效后执行："
+                + remove_command
+                + "，然后重新采集并确认新密钥。程序不会自动删除或覆盖记录。"
+            ) from None
         return client
 
     try:
+        ssh_config = paramiko.SSHConfig()
+        ssh_config_path = Path("~/.ssh/config").expanduser()
+        if ssh_config_path.exists():
+            with ssh_config_path.open(encoding="utf-8") as stream:
+                ssh_config.parse(stream)
         options = host_options(config, host_id)
         snapshot["host"] = options["host"]
         snapshot["device"] = options["device"]

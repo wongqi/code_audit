@@ -200,8 +200,26 @@ def validate_snapshot(data):
 
 
 def load_snapshot(path):
-    with Path(path).open(encoding="utf-8") as stream:
-        return validate_snapshot(json.load(stream))
+    path = Path(path)
+    try:
+        content = path.read_text(encoding="utf-8")
+        if not content.strip():
+            raise ValueError("文件为空，未包含快照数据")
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "JSON 格式错误：第 "
+                + str(exc.lineno)
+                + " 行，第 "
+                + str(exc.colno)
+                + " 列"
+            ) from None
+        return validate_snapshot(data)
+    except UnicodeError:
+        raise ValueError(str(path) + "：文件不是有效的 UTF-8 文本") from None
+    except ValueError as exc:
+        raise ValueError(str(path) + "：" + str(exc)) from None
 
 
 def snapshot_index(base):
@@ -210,7 +228,7 @@ def snapshot_index(base):
     for path in sorted(base.rglob("*.json")):
         if not path.resolve().is_relative_to(base):
             continue
-        record = {"file": path.relative_to(base).as_posix()}
+        record = {"file": path.relative_to(base).as_posix(), "path": str(path)}
         try:
             data = load_snapshot(path)
             record.update(
@@ -224,7 +242,11 @@ def snapshot_index(base):
             )
         except (OSError, ValueError, TypeError, KeyError) as exc:
             record.update(
-                kind=None, host=None, complete=False, error=str(exc), finished_at=""
+                kind=None,
+                host=None,
+                complete=False,
+                error=str(exc).removeprefix(str(path) + "："),
+                finished_at="",
             )
         records.append(record)
 

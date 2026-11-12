@@ -682,7 +682,11 @@ class AuditTests(unittest.TestCase):
             jump_client.connect.call_args.kwargs["hostname"], "jump.invalid"
         )
         self.assertEqual(
-            target_client.connect.call_args.kwargs["hostname"], "target.invalid"
+            target_client.connect.call_args.kwargs["hostname"], "code-audit-D%2FA"
+        )
+        self.assertEqual(
+            jump_client.get_transport.return_value.open_channel.call_args.args[1],
+            ("target.invalid", 22),
         )
         self.assertTrue(channel.sendall.called)
         jump_client.get_transport.return_value.open_session.assert_not_called()

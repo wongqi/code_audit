@@ -21,6 +21,11 @@
     </header>
     <main class="app">
         <div id="global-error" class="warning" role="alert" hidden></div>
+        <details id="snapshot-errors" class="warning" hidden>
+            <summary id="snapshot-errors-summary"></summary>
+            <p>以下文件无法读取，不参与自动快照选择。其他有效快照仍可使用。请按路径检查文件；空文件或格式损坏的文件需要移出快照目录、恢复备份或重新采集。</p>
+            <ul id="snapshot-errors-list"></ul>
+        </details>
         <nav>
             <button type="button" id="tab-compare" class="active">比较快照</button>
             <button type="button" id="tab-collect">采集状态</button>

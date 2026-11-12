@@ -251,6 +251,24 @@ function taskView(task) {
             $('task-results').append(p);
         }
 }
+
+function snapshotErrors() {
+    const invalid = catalog.snapshots.filter(s => s.error);
+    const panel = $('snapshot-errors');
+    panel.hidden = !invalid.length;
+    $('snapshot-errors-summary').textContent = '有 ' + invalid.length + ' 份文件无法读取，展开查看路径与原因';
+    const signature = JSON.stringify(invalid.map(s => [s.path || s.file, s.error]));
+    if (panel.dataset.signature === signature) return;
+    panel.dataset.signature = signature;
+    const list = $('snapshot-errors-list');
+    list.replaceChildren();
+    for (const item of invalid) {
+        const entry = document.createElement('li');
+        entry.append(textNode('code', item.path || item.file), textNode('p', item.error));
+        list.append(entry);
+    }
+}
+
 async function refresh() {
     const response = await api('/api/state');
     catalog = response;
@@ -261,8 +279,7 @@ async function refresh() {
         $(side + '-host').disabled = $(side + '-file').disabled = !!loaded[side];
     }
     taskView(response.task);
-    const invalid = catalog.snapshots.filter(s => s.error);
-    if (invalid.length) showError(new Error('有 ' + invalid.length + ' 份无法读取的快照，请重新采集。' + invalid[0].error));
+    snapshotErrors();
 }
 async function poll() {
     if (polling) return;
